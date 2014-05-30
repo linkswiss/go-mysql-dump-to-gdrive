@@ -9,7 +9,7 @@ go run go-mysql-dump-to-gdrive --help
 
 ## Arguments
 * -cache-file="cache.json": Cache File Name (default cache.json)
-*-client-id="": Google API OAuth Client ID
+* -client-id="": Google API OAuth Client ID
 * -client-secret="": Google API OAuth Client Secret
 * -code="": Authorization Code
 * -db="": Database Name
