@@ -140,7 +140,7 @@ func main() {
 	localTmpFile := *tmpDir + "/" + filename
 
 	// Compose mysqldump command
-	mysqldumpCommand := "/usr/local/mysql/bin/mysqldump -u " + *mysqlUser + " -h " + *mysqlHost + " "
+	mysqldumpCommand := "mysqldump -u " + *mysqlUser + " -h " + *mysqlHost + " "
 	if *allDatabase {
 		mysqldumpCommand += "--all-databases "
 	} else if *mysqlDb != "" {
