@@ -2,42 +2,35 @@ package main
 
 import (
 	"bytes"
-	"code.google.com/p/goauth2/oauth"
 	"code.google.com/p/google-api-go-client/drive/v2"
 	"compress/gzip"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"time"
 )
 
-// Settings for authorization.
-var config = &oauth.Config{
-	Scope:       "https://www.googleapis.com/auth/drive",
-	RedirectURL: "urn:ietf:wg:oauth:2.0:oob",
-	AuthURL:     "https://accounts.google.com/o/oauth2/auth",
-	TokenURL:    "https://accounts.google.com/o/oauth2/token",
-}
-
 // Set the command line arguments
 var (
-	oAuthClientId     = flag.String("client-id", "", "Google API OAuth Client ID")
-	oAuthClientSecret = flag.String("client-secret", "", "Google API OAuth Client Secret")
-	oAuthCode         = flag.String("code", "", "Authorization Code")
-	oAuthCacheFile    = flag.String("cache-file", "cache.json", "Cache File Name (default cache.json)")
-	gDriveFolderId    = flag.String("gdrive-folder-id", "", "Google Drive Backup Folder ID")
-	mysqlUser         = flag.String("db-user", "", "Name of your MySql dump USER")
-	mysqlHost         = flag.String("db-host", "localhost", "Name of your MySql dump HOST")
-	mysqlDb           = flag.String("db", "", "Database Name")
-	allDatabase       = flag.Bool("dump-all", false, "If set script dump all MySql Databases")
-	backupDuration    = flag.Duration("keep-last", 168*time.Hour, "time.Duration (Keep last backups i.e. 10m, 24h (default 168h, last 7 days))")
-	tmpDir            = flag.String("tmp-dir", "/tmp", "Temp directory (default /tmp)")
-	logDir            = flag.String("log-dir", "/var/log", "Log directory (default /var/log)")
-	gzipEnable        = flag.Bool("gzip", false, "If set Gzip Compression Enabled")
+	oAuthCode       = flag.String("code", "", "Authorization Code")
+	oAuthSecretFile = flag.String("secret-file", "client_secret.json", "Secret File (default client_secret.json)")
+	oAuthCacheFile  = flag.String("cache-file", "cache_token.json", "Cache Token File (default cache_token.json)")
+	gDriveFolderId  = flag.String("gdrive-folder-id", "", "Google Drive Backup Folder ID")
+	mysqlUser       = flag.String("db-user", "", "Name of your MySql dump USER")
+	mysqlHost       = flag.String("db-host", "localhost", "Name of your MySql dump HOST")
+	mysqlDb         = flag.String("db", "", "Database Name")
+	allDatabase     = flag.Bool("dump-all", false, "If set script dump all MySql Databases")
+	backupDuration  = flag.Duration("keep-last", 168*time.Hour, "time.Duration (Keep last backups i.e. 10m, 24h (default 168h, last 7 days))")
+	tmpDir          = flag.String("tmp-dir", "/tmp", "Temp directory (default /tmp)")
+	logDir          = flag.String("log-dir", "/var/log", "Log directory (default /var/log)")
+	gzipEnable      = flag.Bool("gzip", false, "If set Gzip Compression Enabled")
 )
 
 // Uploads a file to Google Drive
@@ -77,44 +70,55 @@ func main() {
 	}
 
 	// Set Client Identity
-	config.ClientId = *oAuthClientId
-	config.ClientSecret = *oAuthClientSecret
+	data, err := ioutil.ReadFile(*oAuthSecretFile)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// Get Cache file
-	config.TokenCache = oauth.CacheFile(*oAuthCacheFile)
+	config, err := google.ConfigFromJSON(data, "https://www.googleapis.com/auth/drive")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Check i f cache token exist
+	if _, err := os.Stat(*oAuthCacheFile); os.IsNotExist(err) && *oAuthCode == "" {
+		retrieveCodeUrl(config)
+		return
+	} else if os.IsNotExist(err) && *oAuthCode != "" {
+		err := exchangeToken(config, *oAuthCode, *oAuthCacheFile)
+		if err != nil {
+			log.Fatal("Error in exchangeToken %v\n", err)
+		}
+	}
 
 	// Generate a URL to visit for authorization.
-	t := &oauth.Transport{
-		Config:    config,
-		Transport: http.DefaultTransport,
+	token_file, err := ioutil.ReadFile(*oAuthCacheFile)
+	if err != nil {
+		log.Fatal("Error reading Token Cache %v\n", err)
 	}
 
 	// Check Token stored on TokenCache
-	token, err := config.TokenCache.Token()
+	var token oauth2.Token
+	err = json.Unmarshal(token_file, &token)
 	if err != nil {
+		log.Fatal("Error converting Token Cache %v\n", err)
+	}
+	tok := &oauth2.Token{RefreshToken: token.RefreshToken}
+
+	token_source := config.TokenSource(oauth2.NoContext, tok)
+
+	if !token.Valid() {
 		if *oAuthCode == "" {
-			// Get an authorization code from the data provider.
-			// ("Please ask the user if I can access this resource.")
-			url := config.AuthCodeURL("")
-			fmt.Println("Visit this URL to get a code, then run again with -code=YOUR_CODE\n")
-			fmt.Println(url)
+			retrieveCodeUrl(config)
 			return
 		}
-		// Exchange the authorization code for an access token.
-		// ("Here's the code you gave the user, now give me a token!")
-		token, err = t.Exchange(*oAuthCode)
+		err := exchangeToken(config, *oAuthCode, *oAuthCacheFile)
 		if err != nil {
-			log.Fatal("Exchange:", err)
+			log.Fatal("Error in exchangeToken %v\n", err)
 		}
-		// (The Exchange method will automatically cache the token.)
-		fmt.Printf("Token is cached in %v\n", config.TokenCache)
 	}
 
-	// Assign token to oauth Transport
-	t.Token = token
-
-	// Create a new authorized Drive client.
-	svc, err := drive.New(t.Client())
+	svc, err := drive.New(oauth2.NewClient(oauth2.NoContext, token_source))
 	if err != nil {
 		log.Fatalf("An error occurred creating Drive client: %v\n", err)
 	}
@@ -136,7 +140,7 @@ func main() {
 	localTmpFile := *tmpDir + "/" + filename
 
 	// Compose mysqldump command
-	mysqldumpCommand := "mysqldump -u " + *mysqlUser + " -h " + *mysqlHost + " "
+	mysqldumpCommand := "/usr/local/mysql/bin/mysqldump -u " + *mysqlUser + " -h " + *mysqlHost + " "
 	if *allDatabase {
 		mysqldumpCommand += "--all-databases "
 	} else if *mysqlDb != "" {
@@ -206,4 +210,29 @@ func main() {
 	}
 
 	log.Println("Dump DB " + *mysqlDb + " to Drive Finish")
+}
+
+func retrieveCodeUrl(config *oauth2.Config) {
+	// Get an authorization code from the data provider.
+	// ("Please ask the user if I can access this resource.")
+	url := config.AuthCodeURL("")
+	fmt.Println("Visit this URL to get a code, then run again with -code=YOUR_CODE\n")
+	fmt.Println(url)
+}
+
+func exchangeToken(config *oauth2.Config, code string, token_cache_file string) (err error) {
+	// Exchange the authorization code for an access token.
+	// ("Here's the code you gave the user, now give me a token!")
+	token_source, err := config.Exchange(context.TODO(), code)
+	if err != nil {
+		log.Fatal("Config Exchange %v\n", err)
+	}
+	cache, err := json.Marshal(token_source)
+	if err != nil {
+		log.Fatal("JSON Marshal Token error %v\n", err)
+	}
+	ioutil.WriteFile(token_cache_file, []byte(cache), 0666)
+	fmt.Printf("Token is cached", token_source)
+
+	return err
 }
