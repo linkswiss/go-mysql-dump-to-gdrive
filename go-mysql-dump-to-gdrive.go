@@ -107,6 +107,12 @@ func main() {
 
 	token_source := config.TokenSource(oauth2.NoContext, tok)
 
+	cache, err := json.Marshal(tok)
+	if err != nil {
+		log.Fatal("JSON Marshal Token error %v\n", err)
+	}
+	ioutil.WriteFile(*oAuthCacheFile, []byte(cache), 0666)
+
 	if !token.Valid() {
 		if *oAuthCode == "" {
 			retrieveCodeUrl(config)
