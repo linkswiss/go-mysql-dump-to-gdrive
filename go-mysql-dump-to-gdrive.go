@@ -103,11 +103,18 @@ func main() {
 	if err != nil {
 		log.Fatal("Error converting Token Cache %v\n", err)
 	}
-	tok := &oauth2.Token{RefreshToken: token.RefreshToken}
+	/*tok := &oauth2.Token{RefreshToken: token.RefreshToken}
 
 	token_source := config.TokenSource(oauth2.NoContext, tok)
 
 	cache, err := json.Marshal(tok)
+	if err != nil {
+		log.Fatal("JSON Marshal Token error %v\n", err)
+	}
+	ioutil.WriteFile(*oAuthCacheFile, []byte(cache), 0666)*/
+
+	token_source := config.TokenSource(oauth2.NoContext, &token)
+	cache, err := json.Marshal(token)
 	if err != nil {
 		log.Fatal("JSON Marshal Token error %v\n", err)
 	}
