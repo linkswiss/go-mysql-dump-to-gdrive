@@ -113,7 +113,9 @@ func main() {
 	}
 	ioutil.WriteFile(*oAuthCacheFile, []byte(cache), 0666)*/
 
-	token_source := config.TokenSource(oauth2.NoContext, &token)
+	//token_source := config.TokenSource(oauth2.NoContext, &token)
+	client := config.Client(oauth2.NoContext, &token)
+
 	cache, err := json.Marshal(token)
 	if err != nil {
 		log.Fatal("JSON Marshal Token error %v\n", err)
@@ -131,7 +133,7 @@ func main() {
 		}
 	}
 
-	svc, err := drive.New(oauth2.NewClient(oauth2.NoContext, token_source))
+	svc, err := drive.New(client)
 	if err != nil {
 		log.Fatalf("An error occurred creating Drive client: %v\n", err)
 	}
