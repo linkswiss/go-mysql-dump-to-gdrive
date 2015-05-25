@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"code.google.com/p/google-api-go-client/drive/v2"
 	"compress/gzip"
-	"encoding/json"
 	"flag"
-	"fmt"
-	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"io/ioutil"
@@ -19,9 +16,7 @@ import (
 
 // Set the command line arguments
 var (
-	oAuthCode       = flag.String("code", "", "Authorization Code")
 	oAuthSecretFile = flag.String("secret-file", "client_secret.json", "Secret File (default client_secret.json)")
-	oAuthCacheFile  = flag.String("cache-file", "cache_token.json", "Cache Token File (default cache_token.json)")
 	gDriveFolderId  = flag.String("gdrive-folder-id", "", "Google Drive Backup Folder ID")
 	mysqlUser       = flag.String("db-user", "", "Name of your MySql dump USER")
 	mysqlHost       = flag.String("db-host", "localhost", "Name of your MySql dump HOST")
@@ -75,63 +70,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	config, err := google.ConfigFromJSON(data, "https://www.googleapis.com/auth/drive")
+	config, err := google.JWTConfigFromJSON(data, "https://www.googleapis.com/auth/drive")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Check i f cache token exist
-	if _, err := os.Stat(*oAuthCacheFile); os.IsNotExist(err) && *oAuthCode == "" {
-		retrieveCodeUrl(config)
-		return
-	} else if os.IsNotExist(err) && *oAuthCode != "" {
-		err := exchangeToken(config, *oAuthCode, *oAuthCacheFile)
-		if err != nil {
-			log.Fatal("Error in exchangeToken %v\n", err)
-		}
-	}
-
-	// Generate a URL to visit for authorization.
-	token_file, err := ioutil.ReadFile(*oAuthCacheFile)
-	if err != nil {
-		log.Fatal("Error reading Token Cache %v\n", err)
-	}
-
-	// Check Token stored on TokenCache
-	var token oauth2.Token
-	err = json.Unmarshal(token_file, &token)
-	if err != nil {
-		log.Fatal("Error converting Token Cache %v\n", err)
-	}
-	/*tok := &oauth2.Token{RefreshToken: token.RefreshToken}
-
-	token_source := config.TokenSource(oauth2.NoContext, tok)
-
-	cache, err := json.Marshal(tok)
-	if err != nil {
-		log.Fatal("JSON Marshal Token error %v\n", err)
-	}
-	ioutil.WriteFile(*oAuthCacheFile, []byte(cache), 0666)*/
-
-	//token_source := config.TokenSource(oauth2.NoContext, &token)
-	client := config.Client(oauth2.NoContext, &token)
-
-	cache, err := json.Marshal(token)
-	if err != nil {
-		log.Fatal("JSON Marshal Token error %v\n", err)
-	}
-	ioutil.WriteFile(*oAuthCacheFile, []byte(cache), 0666)
-
-	if !token.Valid() {
-		if *oAuthCode == "" {
-			retrieveCodeUrl(config)
-			return
-		}
-		err := exchangeToken(config, *oAuthCode, *oAuthCacheFile)
-		if err != nil {
-			log.Fatal("Error in exchangeToken %v\n", err)
-		}
-	}
+	client := config.Client(oauth2.NoContext)
 
 	svc, err := drive.New(client)
 	if err != nil {
@@ -144,12 +88,6 @@ func main() {
 		Description: filename,
 		MimeType:    filetype,
 	}
-
-	// Define the Backup Folder
-	p := &drive.ParentReference{Id: *gDriveFolderId}
-
-	// Set the Backup Folder to the file parent
-	f.Parents = []*drive.ParentReference{p}
 
 	// Define local tmp file
 	localTmpFile := *tmpDir + "/" + filename
@@ -210,7 +148,7 @@ func main() {
 	deleteDateTime := time.Now().Add(-*backupDuration).Format(time.RFC3339)
 
 	// Get List of remote backup files
-	l, err := svc.Files.List().Q("'" + *gDriveFolderId + "' in parents and modifiedDate < '" + deleteDateTime + "'").Do()
+	l, err := svc.Files.List().Q("modifiedDate < '" + deleteDateTime + "'").Do()
 	if err != nil {
 		log.Fatalf("An error occurred listing the files: %v\n", err)
 	}
@@ -225,29 +163,4 @@ func main() {
 	}
 
 	log.Println("Dump DB " + *mysqlDb + " to Drive Finish")
-}
-
-func retrieveCodeUrl(config *oauth2.Config) {
-	// Get an authorization code from the data provider.
-	// ("Please ask the user if I can access this resource.")
-	url := config.AuthCodeURL("")
-	fmt.Println("Visit this URL to get a code, then run again with -code=YOUR_CODE\n")
-	fmt.Println(url)
-}
-
-func exchangeToken(config *oauth2.Config, code string, token_cache_file string) (err error) {
-	// Exchange the authorization code for an access token.
-	// ("Here's the code you gave the user, now give me a token!")
-	token_source, err := config.Exchange(context.TODO(), code)
-	if err != nil {
-		log.Fatal("Config Exchange %v\n", err)
-	}
-	cache, err := json.Marshal(token_source)
-	if err != nil {
-		log.Fatal("JSON Marshal Token error %v\n", err)
-	}
-	ioutil.WriteFile(token_cache_file, []byte(cache), 0666)
-	fmt.Printf("Token is cached", token_source)
-
-	return err
 }

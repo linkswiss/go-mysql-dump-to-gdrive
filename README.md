@@ -8,8 +8,6 @@ go run go-mysql-dump-to-gdrive --help
 ```
 
 ## Arguments
-*  -cache-file="cache_token.json": Cache Token File (default cache_token.json)
-*  -code="": Authorization Code
 *  -db="": Database Name
 *  -db-host="localhost": Name of your MySql dump HOST
 *  -db-user="": Name of your MySql dump USER
